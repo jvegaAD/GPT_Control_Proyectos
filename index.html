@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Control de Proyectos con Carta Gantt</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background: #f9f9f9; color: #222; }
+    h1 { color: #2c3e50; }
+    .container { display: flex; flex-direction: row; gap: 16px; }
+    .tabla, .gantt { background: #fff; border-radius: 8px; box-shadow: 0 0 8px #ccc; padding: 10px; }
+    .tabla { width: 600px; }
+    .gantt { flex: 1; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+    th, td { border: 1px solid #bbb; padding: 6px 8px; text-align: center; }
+    th { background: #e8f4fa; }
+    .adelantado { background-color: #d4edda !important; }
+    .en-curso   { background-color: #fff3cd !important; }
+    .atrasado   { background-color: #f8d7da !important; }
+    .no-iniciado { background-color: #e2e3e5 !important; }
+    .bar-adelantado { background: #46b57e; }
+    .bar-en-curso { background: #ffe066; }
+    .bar-atrasado { background: #ee6055; }
+    .bar-no-iniciado { background: #cccccc; }
+    .gantt-table th, .gantt-table td { border: 1px solid #e0e0e0; font-size: 0.85em; padding: 0; }
+    .gantt-table { border-collapse: collapse; width: 100%; }
+    .bar { height: 18px; border-radius: 3px; }
+    .week-label { font-size: 0.8em; color: #666; background: #e6e6e6; }
+  </style>
+</head>
+<body>
+  <h1>Control de Proyectos con Carta Gantt</h1>
+  <div class="container">
+    <div class="tabla">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Tarea</th>
+            <th>Responsable</th>
+            <th>Inicio</th>
+            <th>Término</th>
+            <th>Proy. (%)</th>
+            <th>Real (%)</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="tabla-body"></tbody>
+      </table>
+    </div>
+    <div class="gantt">
+      <table class="gantt-table">
+        <thead id="gantt-head"></thead>
+        <tbody id="gantt-body"></tbody>
+      </table>
+    </div>
+  </div>
+<script>
+// === DATOS DE PRUEBA ===
+const proyectos = [
+  {id:1, tarea:"Excavación terreno", responsable:"Martínez", inicio:"2024-06-01", termino:"2024-06-10", proyectado:100, real:100},
+  {id:2, tarea:"Cimentación", responsable:"Fernández", inicio:"2024-06-11", termino:"2024-06-18", proyectado:70, real:60},
+  {id:3, tarea:"Instalación Eléctrica", responsable:"López", inicio:"2024-06-19", termino:"2024-06-26", proyectado:40, real:20},
+  {id:4, tarea:"Pintura", responsable:"Vega", inicio:"2024-06-27", termino:"2024-07-05", proyectado:0, real:0},
+  {id:5, tarea:"Levantamiento muros", responsable:"Bravo", inicio:"2024-06-10", termino:"2024-06-15", proyectado:50, real:45},
+  {id:6, tarea:"Red sanitaria", responsable:"García", inicio:"2024-06-13", termino:"2024-06-20", proyectado:30, real:10},
+  {id:7, tarea:"Cubierta techumbre", responsable:"Morales", inicio:"2024-06-12", termino:"2024-06-19", proyectado:100, real:100},
+  {id:8, tarea:"Ventanas aluminio", responsable:"Ruiz", inicio:"2024-06-18", termino:"2024-06-24", proyectado:25, real:22},
+  {id:9, tarea:"Pisos flotantes", responsable:"Silva", inicio:"2024-06-21", termino:"2024-06-29", proyectado:0, real:0},
+  {id:10, tarea:"Limpieza final", responsable:"Campos", inicio:"2024-06-30", termino:"2024-07-01", proyectado:100, real:100},
+];
+
+// Calcula el estado para colores y texto
+function calcularEstado(p) {
+  if (p.real === 100 && p.proyectado === 100) return {texto:"Adelantado", clase:"adelantado", bar:"bar-adelantado"};
+  if (p.real === 100 && p.proyectado < 100) return {texto:"Adelantado", clase:"adelantado", bar:"bar-adelantado"};
+  if (p.real === 0 && p.proyectado === 0) return {texto:"No iniciado", clase:"no-iniciado", bar:"bar-no-iniciado"};
+  if (p.real < p.proyectado) return {texto:"Atrasado", clase:"atrasado", bar:"bar-atrasado"};
+  if (p.real === p.proyectado && p.real < 100) return {texto:"En curso", clase:"en-curso", bar:"bar-en-curso"};
+  if (p.real > p.proyectado && p.real < 100) return {texto:"Adelantado", clase:"adelantado", bar:"bar-adelantado"};
+  return {texto:"En curso", clase:"en-curso", bar:"bar-en-curso"};
+}
+
+// Helpers fechas
+function parseFecha(f) {
+  let [y, m, d] = f.split('-'); return new Date(Number(y), Number(m)-1, Number(d));
+}
+function addDays(date, days) {
+  let d = new Date(date); d.setDate(d.getDate()+days); return d;
+}
+function formatFecha(fecha) {
+  return fecha.toISOString().split('T')[0];
+}
+
+// Calcular rango de semanas (lunes a domingo)
+let minInicio = proyectos.reduce((min,p) => parseFecha(p.inicio)<min?parseFecha(p.inicio):min, parseFecha(proyectos[0].inicio));
+let maxTermino = proyectos.reduce((max,p) => parseFecha(p.termino)>max?parseFecha(p.termino):max, parseFecha(proyectos[0].termino));
+maxTermino = new Date(maxTermino.getFullYear(), maxTermino.getMonth()+1, 0); // Fin del mes
+
+// Generar array de lunes (comienzo de cada semana)
+function getMonday(d) {
+  d = new Date(d);
+  var day = d.getDay() || 7; 
+  if(day!==1) d.setHours(-24*(day-1)); 
+  return d;
+}
+let semanas = [];
+let curr = getMonday(minInicio);
+while(curr <= maxTermino) {
+  semanas.push(formatFecha(curr));
+  curr = addDays(curr, 7);
+}
+
+// Render tabla de datos
+function renderTabla() {
+  let tbody = document.getElementById('tabla-body');
+  tbody.innerHTML = '';
+  proyectos.forEach(p => {
+    let est = calcularEstado(p);
+    tbody.innerHTML += `<tr class="${est.clase}">
+      <td>${p.id}</td>
+      <td>${p.tarea}</td>
+      <td>${p.responsable}</td>
+      <td>${p.inicio}</td>
+      <td>${p.termino}</td>
+      <td>${p.proyectado}</td>
+      <td>${p.real}</td>
+      <td>${est.texto}</td>
+    </tr>`;
+  });
+}
+
+// Render tabla Gantt
+function renderGantt() {
+  // Cabecera
+  let thead = document.getElementById('gantt-head');
+  let headHTML = `<tr><th rowspan="2">Tarea</th>`;
+  semanas.forEach((s, i) => headHTML += `<th class="week-label">S${i+1}<br>${s}</th>`);
+  headHTML += `</tr><tr>`;
+  semanas.forEach(() => headHTML += `<th class="week-label">Semana</th>`);
+  headHTML += `</tr>`;
+  thead.innerHTML = headHTML;
+
+  // Filas
+  let tbody = document.getElementById('gantt-body');
+  tbody.innerHTML = '';
+  proyectos.forEach((p, idx) => {
+    let est = calcularEstado(p);
+    let ini = parseFecha(p.inicio), fin = parseFecha(p.termino);
+    let row = `<tr><td style="min-width:150px">${p.tarea}</td>`;
+    semanas.forEach((sem, sidx) => {
+      let lunes = parseFecha(sem);
+      let domingo = addDays(lunes, 6);
+      // Si el rango de la tarea intersecta la semana
+      if (fin < lunes || ini > domingo) {
+        row += `<td></td>`;
+      } else {
+        row += `<td><div class="bar ${est.bar}" title="${p.tarea}" style="width: 95%;"></div></td>`;
+      }
+    });
+    row += `</tr>`;
+    tbody.innerHTML += row;
+  });
+}
+
+renderTabla();
+renderGantt();
+</script>
+</body>
+</html>
